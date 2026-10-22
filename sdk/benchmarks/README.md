@@ -25,6 +25,28 @@ yarn bench:network --scenario live-imports --latency 0  # real network
 
 See the header of `network-bench.mjs` for every option.
 
+## verify-proving.mjs
+
+Checks that a change to program resolution keeps proving working. For each
+build it proves two flows over the same synthetic import graph:
+
+- local: `buildAuthorization`, `buildFeeAuthorization`, then
+  `buildTransactionFromAuthorization`
+- remote: `provingRequest`, serialized and parsed back as a prover receives it,
+  then proved from its authorizations the way the prover does
+
+It prints the transitions in each transaction and the root program's output,
+and exits non-zero when a flow fails. Routes the mock does not serve (state
+root, block height) go to `--api-host`, and the credits.aleo keys are
+downloaded, so it needs network access. Proving takes a few minutes per build.
+
+```sh
+yarn verify:proving --sdk base=... --compare pr=...
+```
+
+`mock-node.mjs` holds the mock node API and the synthetic programs that both
+scripts use.
+
 ## Comparing branches
 
 `build-variants.sh` builds the SDK once per variant into `bench-builds/` and
@@ -38,6 +60,7 @@ sdk/benchmarks/build-variants.sh base=HEAD \
     pr1437=fix/parallel-program-imports \
     both=fix/skip-unused-call-graphs+fix/parallel-program-imports
 node sdk/benchmarks/network-bench.mjs --sdk base=... --compare pr1436=... # as printed
+node sdk/benchmarks/verify-proving.mjs --sdk base=... --compare pr1436=...  # same arguments
 ```
 
 Each round runs every build in its own process, in a random order.

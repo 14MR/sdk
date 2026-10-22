@@ -42,6 +42,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import path from "node:path";
+import {
+    MOCK_HOST,
+    ROOT_PROGRAM,
+    mockResponse,
+    resourceUrl,
+    syntheticPrograms,
+} from "./mock-node.mjs";
 
 const MOCK_SCENARIOS = ["imports", "authorize", "proving-request"];
 const LIVE_SCENARIOS = ["live-imports"];
@@ -91,11 +98,14 @@ for (const name of scenarios) {
         );
 }
 
-const MOCK_HOST = "https://sdk-bench.invalid/api/v2";
 const PRIVATE_KEY =
     "APrivateKey1zkpJkyYRGYtkeHDaFfwsKtUJzia7csiWhfBWPXWhXJzy9Ls";
-const ROOT_PROGRAM = "bench_root.aleo";
-const programs = syntheticPrograms();
+const programs = syntheticPrograms({
+    depth,
+    width,
+    functions: unusedFunctions,
+    instructions,
+});
 
 const builds = [
     parseBuild(
@@ -127,12 +137,7 @@ function installFetchTrace() {
         unhandled: [],
     };
     globalThis.fetch = async (resource, init) => {
-        const url =
-            typeof resource === "string"
-                ? resource
-                : resource instanceof URL
-                  ? resource.href
-                  : resource.url;
+        const url = resourceUrl(resource);
         if (!url.startsWith("http")) return realFetch(resource, init);
         trace.requests.push(url);
         trace.started.push(performance.now());
@@ -140,7 +145,12 @@ function installFetchTrace() {
         trace.maxInFlight = Math.max(trace.maxInFlight, trace.inFlight);
         try {
             await sleep(latency + Math.random() * jitter);
-            if (url.startsWith(MOCK_HOST)) return mockResponse(url, trace);
+            if (url.startsWith(MOCK_HOST)) {
+                const response = mockResponse(url, network, programs);
+                if (response) return response;
+                trace.unhandled.push(url);
+                return new Response("not found", { status: 404 });
+            }
             return await realFetch(resource, init);
         } finally {
             trace.inFlight--;
@@ -216,70 +226,6 @@ async function benchmark(sdkEntry) {
             `mock had no route for:\n  ${[...new Set(trace.unhandled)].join("\n  ")}\n`,
         );
     return result;
-}
-
-// Answers the node API routes the SDK uses for program resolution.
-function mockResponse(url, trace) {
-    const route = new URL(url).pathname.replace(
-        new URL(MOCK_HOST).pathname + "/" + network,
-        "",
-    );
-    const json = (body) =>
-        new Response(JSON.stringify(body), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-        });
-    let match;
-    if ((match = route.match(/^\/program\/([\w.]+)$/)) && programs[match[1]])
-        return json(programs[match[1]]);
-    if ((match = route.match(/^\/program\/([\w.]+)\/latest_edition$/)))
-        return json(0);
-    if ((match = route.match(/^\/program\/([\w.]+)\/amendment_count$/)))
-        return json({ program_id: match[1], edition: 0, amendment_count: 0 });
-    if (route === "/block/height/latest") return json(20_000_000);
-    if (route.startsWith("/program/credits.aleo/mapping/account/"))
-        return json("1000000000000u64");
-    trace.unhandled.push(route);
-    return new Response("not found", { status: 404 });
-}
-
-// A root program over `depth` levels of `width` programs. Each program imports
-// every program on the level below, so the import graph is a layered DAG with
-// shared dependencies, and `main` calls one chain down to a leaf so the
-// execution stays within the transition limit. The unused functions only make
-// the sources bigger, so parsing them costs about what a real program does.
-function syntheticPrograms() {
-    const level = (l) =>
-        l === 0
-            ? [ROOT_PROGRAM]
-            : Array.from({ length: width }, (_, i) => `bench_l${l}_${i}.aleo`);
-    const sources = {};
-    for (let l = 0; l <= depth; l++) {
-        const children = l < depth ? level(l + 1) : [];
-        for (const id of level(l)) {
-            const lines = children.map((child) => `import ${child};`);
-            lines.push("", `program ${id};`, "");
-            lines.push("function main:", "    input r0 as u32.public;");
-            if (children.length) {
-                lines.push(`    call ${children[0]}/main r0 into r1;`);
-                lines.push("    output r1 as u32.public;", "");
-            } else {
-                lines.push("    add r0 1u32 into r1;");
-                lines.push("    output r1 as u32.public;", "");
-            }
-            for (let f = 0; f < unusedFunctions; f++) {
-                lines.push(`function unused_${f}:`);
-                lines.push("    input r0 as u32.public;");
-                for (let i = 0; i < instructions; i++)
-                    lines.push(
-                        `    add.w r${i} ${f + i + 1}u32 into r${i + 1};`,
-                    );
-                lines.push(`    output r${instructions} as u32.public;`, "");
-            }
-            sources[id] = lines.join("\n");
-        }
-    }
-    return sources;
 }
 
 function run() {

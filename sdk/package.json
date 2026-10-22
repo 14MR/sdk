@@ -75,7 +75,8 @@
     "test:attw": "yarn pack --filename /tmp/provablehq-sdk-attw.tgz && attw /tmp/provablehq-sdk-attw.tgz --profile=node16",
     "test:cjs": "node tests/cjs-smoke/smoke.cjs",
     "test:cjs:pack": "node tests/cjs-smoke/pack-install.cjs",
-    "bench:network": "node benchmarks/network-bench.mjs"
+    "bench:network": "node benchmarks/network-bench.mjs",
+    "verify:proving": "node benchmarks/verify-proving.mjs"
   },
   "repository": {
     "type": "git",
